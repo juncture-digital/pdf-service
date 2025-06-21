@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy requirements and install Python dependencies
-COPY requirements-gcr.txt requirements.txt
+COPY requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright and Chromium (as root)
@@ -45,7 +45,7 @@ RUN cp -r /root/.cache/ms-playwright /home/appuser/.cache/ && \
     chown -R appuser:appuser /home/appuser/.cache/ms-playwright
 
 # Copy application code
-COPY pdf_service_gcr.py main.py
+COPY pdf_service.py main.py
 RUN chown appuser:appuser main.py
 
 # Switch to non-root user

@@ -1,8 +1,4 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 import logging
-import asyncio
 import os
 import tempfile
 from collections import defaultdict
@@ -106,27 +102,28 @@ async def pdf(
     marginRight: Optional[str] = "0.2in",
     marginTop: Optional[str] = "0.75in",
     pageRanges: Optional[str] = '',
-    format: Optional[str] = "Letter",
-    width: Optional[str] = None,
-    height: Optional[str] = None,
+    format: Optional[str] = "Letter",  # A4, Letter, Legal, etc.
+    width: Optional[str] = None,  # PDF page width (e.g., "8.5in", "210mm")
+    height: Optional[str] = None,  # PDF page height (e.g., "11in", "297mm")
     printBackground: Optional[bool] = True,
     scale: Optional[float] = 0.9,
-    timeout: Optional[int] = 30000,
-    waitForImages: Optional[bool] = True,
-    waitTime: Optional[int] = 2000,
-    enableJavaScript: Optional[bool] = True,
-    viewportWidth: Optional[int] = 1280,
-    viewportHeight: Optional[int] = 720,
-    deviceScaleFactor: Optional[float] = 1.0,
-    preferCSSPageSize: Optional[bool] = False,
-    hideElements: Optional[str] = None,
-    hideClasses: Optional[str] = None,
-    hideIds: Optional[str] = None,
-    hideTags: Optional[str] = None,
-    pageBreakBefore: Optional[str] = None,
-    pageBreakAfter: Optional[str] = None,
-    keepTogether: Optional[str] = None,
-    customCSS: Optional[str] = None):
+    timeout: Optional[int] = 180000,  # Playwright uses milliseconds
+    waitForImages: Optional[bool] = True,  # Wait for images to load
+    waitForIframes: Optional[bool] = True,  # Wait for iframes to load
+    waitTime: Optional[int] = 2000,  # Additional wait time in milliseconds
+    enableJavaScript: Optional[bool] = True,  # Enable/disable JavaScript
+    viewportWidth: Optional[int] = 1280,  # Page width for rendering
+    viewportHeight: Optional[int] = 720,  # Page height for rendering
+    deviceScaleFactor: Optional[float] = 1.0,  # Device pixel ratio
+    preferCSSPageSize: Optional[bool] = False,  # Use CSS @page size
+    hideElements: Optional[str] = None,  # CSS selectors to hide (comma-separated)
+    hideClasses: Optional[str] = None,  # Class names to hide (comma-separated)
+    hideIds: Optional[str] = None,  # IDs to hide (comma-separated)
+    hideTags: Optional[str] = None,  # HTML tags to hide (comma-separated)
+    pageBreakBefore: Optional[str] = None,  # CSS selectors to force page break before
+    pageBreakAfter: Optional[str] = None,  # CSS selectors to force page break after
+    keepTogether: Optional[str] = None,  # CSS selectors to avoid breaking inside
+    customCSS: Optional[str] = None):  # Custom CSS to inject
     
     # Get client IP for rate limiting
     client_ip = request.client.host if request.client else "unknown"
@@ -142,8 +139,8 @@ async def pdf(
         raise HTTPException(status_code=400, detail="Invalid URL format")
     
     # Validate parameters
-    if timeout < 5000 or timeout > 120000:
-        raise HTTPException(status_code=400, detail="Timeout must be between 5000 and 120000 milliseconds")
+    if timeout < 5000 or timeout > 180000:
+        raise HTTPException(status_code=400, detail="Timeout must be between 5000 and 180000 milliseconds")
     
     if waitTime < 0 or waitTime > 30000:
         raise HTTPException(status_code=400, detail="Wait time must be between 0 and 30000 milliseconds")
@@ -162,17 +159,18 @@ async def pdf(
     # Generate unique filename
     url_hash = sha256(url.encode('utf-8')).hexdigest()
     pdf_path = os.path.join(tempfile.gettempdir(), f'pdf_{url_hash}_{int(time.time())}.pdf')
-    
+
     try:
         async with async_playwright() as p:
-            # Launch browser
+            # Launch browser with specific args for PDF generation
             browser = await p.chromium.launch(
                 headless=True,
                 args=[
-                    '--no-sandbox',
+                    '--no-sandbox', 
                     '--disable-dev-shm-usage',
                     '--disable-web-security',
-                    '--disable-features=VizDisplayCompositor'
+                    '--disable-features=VizDisplayCompositor',
+                    f'--window-size={viewportWidth},{viewportHeight}'
                 ]
             )
             
@@ -186,6 +184,9 @@ async def pdf(
                 
                 # Emulate print media and set extra HTTP headers
                 await page.emulate_media(media='print')
+                await page.set_extra_http_headers({
+                    'User-Agent': f'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 PDF-Generator Viewport-{viewportWidth}x{viewportHeight}'
+                })
                 
                 # Configure JavaScript if needed
                 if not enableJavaScript:
@@ -194,7 +195,7 @@ async def pdf(
                 # Set longer timeout for slow-loading pages
                 page.set_default_timeout(timeout)
                 
-                # Navigate to URL
+                # Navigate to URL with timeout and wait for content to load
                 await page.goto(url, timeout=timeout, wait_until='networkidle')
                 
                 # Build CSS rules
@@ -254,53 +255,69 @@ async def pdf(
                 if customCSS:
                     css_rules.append(customCSS)
                 
-                # Apply CSS if we have any rules
-                if css_rules:
-                    css_content = f'''
-                        @media print {{
-                            {chr(10).join(css_rules)}
-                            
-                            /* Good defaults for print */
-                            * {{
-                                -webkit-print-color-adjust: exact !important;
-                                color-adjust: exact !important;
-                            }}
-                            
-                            body {{
-                                font-size: 12pt;
-                                line-height: 1.4;
-                            }}
-                            
-                            h1, h2, h3, h4, h5, h6 {{
-                                break-after: avoid !important;
-                                page-break-after: avoid !important;
-                            }}
-                            
-                            p, li {{
-                                orphans: 3;
-                                widows: 3;
-                            }}
-                            
-                            img, table, pre, blockquote {{
-                                break-inside: avoid !important;
-                                page-break-inside: avoid !important;
-                            }}
+                # Build complete CSS with print media queries
+                css_content = f'''
+                    @media print {{
+                        {chr(10).join(css_rules)}
+                        
+                        /* Good defaults for print */
+                        * {{
+                            -webkit-print-color-adjust: exact !important;
+                            color-adjust: exact !important;
                         }}
                         
-                        {chr(10).join(css_rules)}
-                    '''
-                    await page.add_style_tag(content=css_content)
-                    logger.info(f'Applied {len(css_rules)} CSS rules')
+                        /* Better typography for print */
+                        body {{
+                            font-size: 12pt;
+                            line-height: 1.4;
+                        }}
+                        
+                        h1, h2, h3, h4, h5, h6 {{
+                            break-after: avoid !important;
+                            page-break-after: avoid !important;
+                        }}
+                        
+                        p, li {{
+                            orphans: 3;
+                            widows: 3;
+                        }}
+                        
+                        img {{
+                            max-width: 100% !important;
+                            break-inside: avoid !important;
+                            page-break-inside: avoid !important;
+                        }}
+                        
+                        table {{
+                            break-inside: avoid !important;
+                            page-break-inside: avoid !important;
+                        }}
+                        
+                        pre, blockquote {{
+                            break-inside: avoid !important;
+                            page-break-inside: avoid !important;
+                        }}
+                    }}
+                    
+                    /* Apply rules to screen view too */
+                    {chr(10).join(css_rules)}
+                '''
                 
-                # Wait for content loading if requested
-                if waitForImages or waitTime > 0:
+                if css_rules:
+                    await page.add_style_tag(content=css_content)
+                    logger.info(f'Applied {len(css_rules)} CSS rules including page break controls')
+                
+                # Additional waiting strategies for dynamic content
+                if waitForImages or waitForIframes or waitTime > 0:
                     try:
+                        # Wait for the page to be fully loaded
                         await page.wait_for_load_state('networkidle', timeout=5000)
                         
                         if waitForImages:
+                            # Wait for images to load
                             images = await page.query_selector_all('img')
                             if images:
-                                logger.info(f'Waiting for {len(images)} images to load...')
+                                logger.info(f'Found {len(images)} images, waiting for them to load...')
                                 
                                 # Scroll through the page to trigger lazy loading
                                 await page.evaluate('''
@@ -345,6 +362,55 @@ async def pdf(
                                 await page.evaluate('window.scrollTo(0, 0)')
                                 await page.wait_for_timeout(500)
                         
+                        if waitForIframes:
+                            # Wait for images to load
+                            iframes = await page.query_selector_all('iframe')
+                            if iframes:
+                                logger.info(f'Found {len(iframes)} iframes, waiting for them to load...')
+                                
+                                # Scroll through the page to trigger lazy loading
+                                await page.evaluate('''
+                                    () => {
+                                        return new Promise(resolve => {
+                                            let totalHeight = 0;
+                                            const distance = 100;
+                                            const timer = setInterval(() => {
+                                                const scrollHeight = document.body.scrollHeight;
+                                                window.scrollBy(0, distance);
+                                                totalHeight += distance;
+                                                
+                                                if(totalHeight >= scrollHeight){
+                                                    clearInterval(timer);
+                                                    resolve();
+                                                }
+                                            }, 100);
+                                        });
+                                    }
+                                ''')
+                                
+                                # Wait for iframes to load
+                                await page.evaluate('''
+                                    async () => {
+                                        const iframes = Array.from(document.querySelectorAll('iframe'));
+                                        const iframePromises = iframes.map(iframe => {
+                                            if (iframe.complete && iframe.naturalHeight !== 0) {
+                                                return Promise.resolve();
+                                            }
+                                            return new Promise(resolve => {
+                                                iframe.onload = () => resolve();
+                                                iframe.onerror = () => resolve(); // Resolve even on error to not block
+                                                // Set a timeout to avoid hanging
+                                                setTimeout(() => resolve(), 5000);
+                                            });
+                                        });
+                                        await Promise.all(iframePromises);
+                                    }
+                                ''')
+                                
+                                # Scroll back to top
+                                await page.evaluate('window.scrollTo(0, 0)')
+                                await page.wait_for_timeout(500)
+                                
                         # Additional wait time for other dynamic content
                         if waitTime > 0:
                             logger.info(f'Waiting additional {waitTime}ms for dynamic content...')
@@ -413,98 +479,36 @@ async def pdf(
             raise HTTPException(status_code=500, detail="Generated PDF is empty")
         
         logger.info(f'PDF generated successfully: {len(pdf_content)} bytes')
-        
+                
+        parsed_url = urlparse(url)
+        path_segments = [seg for seg in parsed_url.path.split('/') if seg]
+        filename = f"{path_segments[-1]}.pdf" if path_segments else "document.pdf"
+
         return Response(
             status_code=200,
             media_type='application/pdf',
             content=pdf_content,
             headers={
-                "Content-Disposition": f"attachment; filename=webpage_{url_hash[:8]}.pdf",
+                "Content-Disposition": f"attachment; filename={filename}",
                 "Cache-Control": "no-cache, no-store, must-revalidate",
             }
         )
         
     except Exception as e:
         error_msg = str(e)
-        error_type = str(type(e))
         logger.error(f'PDF conversion failed for URL {url}: {error_msg}')
-        logger.error(f'Error type: {error_type}')
         
-        # More specific error handling
-        if "TimeoutError" in error_type or "timeout" in error_msg.lower():
+        if "TimeoutError" in str(type(e)) or "timeout" in error_msg.lower():
             raise HTTPException(status_code=408, detail="PDF generation timed out")
-        elif "NetworkError" in error_type or "net::" in error_msg:
+        elif "net::" in error_msg or "ERR_" in error_msg:
             raise HTTPException(status_code=502, detail="Unable to access the provided URL")
         else:
             raise HTTPException(status_code=500, detail=f"PDF generation failed: {error_msg}")
     
     finally:
-        # Clean up temporary file
+        # Clean up
         try:
             if os.path.exists(pdf_path):
                 os.remove(pdf_path)
-                logger.debug(f'Cleaned up temporary file: {pdf_path}')
         except OSError as e:
             logger.warning(f'Failed to clean up temporary file {pdf_path}: {e}')
-
-@app.get("/inspect")
-async def inspect_elements(url: str, timeout: Optional[int] = 30000):
-    """Inspect page elements to help identify what to hide"""
-    if not is_valid_url(url):
-        raise HTTPException(status_code=400, detail="Invalid URL format")
-    
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            try:
-                page = await browser.new_page()
-                await page.goto(url, timeout=timeout, wait_until='networkidle')
-                
-                # Get common elements that people often want to hide
-                element_info = await page.evaluate('''
-                    () => {
-                        const getElementInfo = (selector) => {
-                            const elements = document.querySelectorAll(selector);
-                            return Array.from(elements).slice(0, 5).map(el => ({
-                                tag: el.tagName.toLowerCase(),
-                                id: el.id || null,
-                                classes: Array.from(el.classList),
-                                text: (el.textContent || '').substring(0, 50).trim()
-                            }));
-                        };
-                        
-                        return {
-                            navigation: getElementInfo('nav, .nav, .navigation, .navbar'),
-                            headers: getElementInfo('header, .header'),
-                            footers: getElementInfo('footer, .footer'),
-                            sidebars: getElementInfo('.sidebar, .side-bar, aside'),
-                            buttons: getElementInfo('button'),
-                            ads: getElementInfo('.ad, .ads, .advertisement, .banner'),
-                            forms: getElementInfo('form'),
-                            all_ids: Array.from(new Set(Array.from(document.querySelectorAll('[id]')).map(el => el.id))).slice(0, 20),
-                            common_classes: Array.from(new Set(
-                                Array.from(document.querySelectorAll('[class]'))
-                                    .flatMap(el => Array.from(el.classList))
-                                    .filter(cls => cls.length > 2)
-                            )).slice(0, 30)
-                        };
-                    }
-                ''')
-                
-            finally:
-                await browser.close()
-        
-        return {
-            "url": url,
-            "elements_found": element_info,
-            "hide_examples": {
-                "by_tag": "hideTags=nav,footer,button",
-                "by_class": "hideClasses=sidebar,advertisement,no-print",
-                "by_id": "hideIds=header,navigation",
-                "by_selector": "hideElements=.sidebar,.ad,button.close"
-            },
-            "timestamp": datetime.now().isoformat()
-        }
-                
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Inspection failed: {str(e)}")

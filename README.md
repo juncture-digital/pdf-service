@@ -37,12 +37,12 @@ The service is containerized using Docker and designed for serverless deployment
 1. **Clone the repository**
    ```bash
    git clone <your-repo>
-   cd web-to-pdf-converter
+   cd pdf-service
    ```
 
 2. **Install dependencies**
    ```bash
-   pip install -r requirements-gcr.txt
+   pip install -r requirements.txt
    playwright install chromium
    ```
 
